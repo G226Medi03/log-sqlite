@@ -47,17 +47,21 @@ func OpenSQLite(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open log database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
+	// Set busy_timeout before journal_mode: switching to WAL needs a write
+	// lock, and without a timeout a concurrent reader makes that fail
+	// immediately with "database is locked".
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set log database busy timeout: %w", err)
+	}
 	var mode string
 	if err := db.QueryRow("PRAGMA journal_mode = WAL;").Scan(&mode); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("set log database journal mode: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set log database busy timeout: %w", err)
-	}
-	db.SetMaxOpenConns(1)
 
 	store := &DB{ctx: context.Background(), db: db}
 	if err := store.init(); err != nil {
